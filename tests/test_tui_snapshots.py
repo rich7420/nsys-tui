@@ -3,7 +3,7 @@ tests/test_tui_snapshots.py — Visual snapshot tests for Textual TUIs.
 
 Uses pytest-textual-snapshot's snap_compare fixture to generate SVG-based
 snapshots of the Tree and Timeline Textual apps. Snapshots are stored under
-tests/snapshots/ and should be updated with:
+tests/__snapshots__/ and should be updated with:
 
     pytest tests/test_tui_snapshots.py --snapshot-update -v
 """

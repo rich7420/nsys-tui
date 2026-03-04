@@ -16,7 +16,6 @@ def run_timeline(
     db_path: str,
     device: int,
     trim: tuple[int, int] | None,
-    max_depth: int = -1,
     min_ms: float = 0,
 ) -> None:
     """Launch the Textual horizontal timeline browser (lazy-imports Textual)."""

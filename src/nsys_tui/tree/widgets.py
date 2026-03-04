@@ -123,7 +123,7 @@ class FilterBar(Widget):
     """Input bar for text filter with live-mode indicator.
 
     Attributes:
-        live_mode   — if True, filter applies on every keystroke
+        (live filter state is managed by NsysTreeApp; this widget is a thin view.)
     """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
@@ -138,8 +138,6 @@ class FilterBar(Widget):
         display: block;
     }
     """
-
-    live_mode: reactive[bool] = reactive(False)
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Filter nodes… (Enter apply, Esc cancel)", id="filter-input")

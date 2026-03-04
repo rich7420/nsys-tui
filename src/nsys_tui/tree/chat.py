@@ -234,8 +234,9 @@ class ChatPanel(Widget):
 
         self.app.call_from_thread(self._on_stream_done, content)
 
+        # Dispatch navigation / zoom actions back onto the Textual app thread.
         for action in actions:
             try:
-                self._on_action_fn(action)
+                self.app.call_from_thread(self._on_action_fn, action)
             except Exception:
                 pass

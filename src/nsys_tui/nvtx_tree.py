@@ -1,5 +1,5 @@
 """
-tree.py — Build hierarchical NVTX trees with nested GPU kernels.
+nvtx_tree.py — Build hierarchical NVTX trees with nested GPU kernels.
 
 Provides a "function stack trace" view: NVTX annotations form the tree
 structure, GPU kernels are leaves attached to their innermost NVTX range.

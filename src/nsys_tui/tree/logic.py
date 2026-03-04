@@ -2,7 +2,8 @@
 tree/logic.py — Pure functions for the NVTX tree TUI.
 
 No Textual, no curses, no I/O — fully unit-testable with plain pytest.
-All state is passed as arguments; nothing is mutated here.
+All state is passed as arguments; the only in-place changes are view
+annotations on TreeNode instances (for example, bubble_us flags).
 """
 from __future__ import annotations
 

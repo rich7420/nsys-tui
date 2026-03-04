@@ -323,6 +323,8 @@ class NsysTimelineApp(App):
 
     def watch_selected_stream_idx(self) -> None:
         self._push_canvas_state()
+        if self._is_mounted:
+            self._update_title()
 
     def watch_ns_per_col(self) -> None:
         self._push_canvas_state()
@@ -649,7 +651,6 @@ def run_timeline(
     db_path: str,
     device: int,
     trim: tuple[int, int] | None,
-    max_depth: int = -1,
     min_ms: float = 0,
 ) -> None:
     """Launch the Textual horizontal timeline browser."""

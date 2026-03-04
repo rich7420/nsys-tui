@@ -91,8 +91,13 @@ class TimelineCanvas(Widget):
     def render_line(self, y: int) -> Strip:
         """Return a Strip for each terminal row."""
         width = self.size.width
-        if width <= 0 or not self.streams:
+        if width <= 0:
             return Strip.blank(width)
+        if not self.streams:
+            # Avoid Strip.blank here: segments with a None style can trigger
+            # filter bugs in third-party plugins (e.g. snapshot monochrome
+            # filters). Use an explicit empty Style instead.
+            return Strip([Segment(" " * width, Style())])
 
         label_w = self.label_w
         timeline_w = max(width - label_w, 1)
