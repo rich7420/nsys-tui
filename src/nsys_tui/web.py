@@ -163,13 +163,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             if info:
                 label += f" - {info.name} ({info.pci_bus}), {info.sm_count} SMs, {info.memory_bytes/1e9:.0f}GB"
             gpu_infos.append({"id": dev, "label": label})
-        # Get profile time range from metadata
-        t_start = getattr(prof.meta, 'session_start_ns', 0) or 0
-        t_end = getattr(prof.meta, 'session_end_ns', 0) or 0
-        if t_end <= t_start:
-            # Fallback: try to detect from data
-            t_start = 0
-            t_end = int(60e9)  # Default 60s
+        # Get profile time range from kernel metadata (min_start_ns, max_end_ns)
+        t_start, t_end = prof.meta.time_range
         self._json_response({
             "time_range_ns": [t_start, t_end],
             "gpus": gpu_infos,
