@@ -12,8 +12,10 @@ Usage:
 import json
 import os
 import queue
+import signal
 import socketserver
 import threading
+import time as _time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import quote
@@ -63,6 +65,7 @@ class _ThreadPoolMixIn(socketserver.ThreadingMixIn):
 class _ThreadedHTTPServer(_ThreadPoolMixIn, socketserver.ThreadingMixIn, HTTPServer):
     """Concurrent chat requests via bounded thread pool; workers released after each request."""
     daemon_threads = True
+    allow_reuse_address = True
 
 from .export import gpu_trace  # noqa: E402
 from .viewer import generate_html, generate_timeline_html  # noqa: E402
@@ -70,7 +73,7 @@ from .viewer import generate_html, generate_timeline_html  # noqa: E402
 # ── Shared helpers ───────────────────────────────────────────────
 
 def _run_server(server, open_url, prof):
-    """Run an HTTPServer with browser-open and graceful shutdown. Uses server.server_address[1] for URL/port."""
+    """Run an HTTPServer with browser-open and graceful shutdown."""
     actual_port = server.server_address[1]
     actual_url = f"http://127.0.0.1:{actual_port}"
     print(f"Serving at {actual_url}")
@@ -81,9 +84,13 @@ def _run_server(server, open_url, prof):
         print(f"  Remote/SSH: on your local machine run:  ssh -L {actual_port}:127.0.0.1:{actual_port} <host>  then open the URL in your local browser.")
     print("Press Ctrl-C to stop.")
     if open_url:
-        # Use actual server URL when caller passed a localhost URL (so port=0 works).
         open_target = actual_url if (open_url and open_url.startswith("http://127.0.0.1:")) else open_url
         threading.Timer(0.3, webbrowser.open, args=(open_target,)).start()
+    # Ensure Ctrl-C always works
+    def _sigint_handler(sig, frame):
+        print("\nShutting down.")
+        server.shutdown()
+    signal.signal(signal.SIGINT, _sigint_handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -187,15 +194,21 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         except (ValueError, IndexError):
             start_s, end_s = 0, 5
         trim_ns = (int(start_s * 1e9), int(end_s * 1e9))
+        t0 = _time.monotonic()
+        print(f"[tile] {start_s:.1f}s–{end_s:.1f}s  loading...", flush=True)
         try:
             data_json = generate_timeline_data_json(prof, devices, trim_ns)
             body = data_json.encode("utf-8")
+            elapsed = _time.monotonic() - t0
+            print(f"[tile] {start_s:.1f}s–{end_s:.1f}s  done in {elapsed:.2f}s  ({len(body)//1024}KB)", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
         except Exception as e:
+            elapsed = _time.monotonic() - t0
+            print(f"[tile] {start_s:.1f}s–{end_s:.1f}s  ERROR in {elapsed:.2f}s: {e}", flush=True)
             self._json_response({"error": str(e)}, 500)
 
     def _json_response(self, obj, status=200):
