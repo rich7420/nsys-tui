@@ -749,12 +749,11 @@
             try {
                 const metaResp = await fetch('/api/meta');
                 profileMeta = await metaResp.json();
-                // Default view: first 5 seconds
-                const pStartS = profileMeta.time_range_ns[0] / 1e9;
-                const firstEnd = pStartS + TILE_WINDOW_S;
-                await fetchTile(pStartS, firstEnd);
+                // Default view: first 5 seconds (from t=0)
+                const firstEnd = TILE_WINDOW_S;
+                await fetchTile(0, firstEnd);
                 rebuildDataFromCache();
-                viewStart = pStartS * 1e9;
+                viewStart = 0;
                 viewEnd = firstEnd * 1e9;
                 hideLoading();
                 resize();
@@ -1145,7 +1144,7 @@
         }
 
         function clampView() {
-            const minNs = profileMeta ? profileMeta.time_range_ns[0] : timeStart;
+            const minNs = 0;  // time is never negative
             const maxNs = profileMeta ? profileMeta.time_range_ns[1] : timeEnd;
             const span = viewEnd - viewStart;
             if (viewStart < minNs) { viewStart = minNs; viewEnd = minNs + span; }
@@ -1178,11 +1177,10 @@
         function zoomIn() { zoomAt(0.5); }
         function zoomOut() { zoomAt(2); }
         function fitAll() {
-            const minNs = profileMeta ? profileMeta.time_range_ns[0] : timeStart;
             const maxNs = profileMeta ? profileMeta.time_range_ns[1] : timeEnd;
-            const range = maxNs - minNs;
-            viewStart = minNs - range * 0.02;
-            viewEnd = maxNs + range * 0.02;
+            viewStart = 0;
+            viewEnd = maxNs;
+            clampView();
             draw();
             afterViewChange();
         }
