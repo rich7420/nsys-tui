@@ -11,8 +11,14 @@ are needed because PyTorch/autograd runs backward passes on separate
 """
 
 
-def _find_kernel_threads(profile, device: int) -> list[int]:
-    """Find all CPU threads that launch kernels on this device, ordered by launch count."""
+def _find_kernel_threads(profile, device: int,
+                         min_pct: float = 0.5) -> list[int]:
+    """Find CPU threads that are significant kernel launchers on this device.
+
+    Only returns threads whose launch count is >= min_pct of the top thread's
+    count.  This filters out cross-GPU NCCL threads that launch a few
+    collectives on this device but bring unrelated NVTX context.
+    """
     with profile._lock:
         rows = profile.conn.execute(f"""
             SELECT r.globalTid, COUNT(*) as cnt
@@ -21,7 +27,11 @@ def _find_kernel_threads(profile, device: int) -> list[int]:
             WHERE k.deviceId = ?
             GROUP BY r.globalTid ORDER BY cnt DESC
         """, (device,)).fetchall()
-    return [r[0] for r in rows] if rows else []
+    if not rows:
+        return []
+    top_cnt = rows[0][1]
+    threshold = top_cnt * min_pct
+    return [r[0] for r in rows if r[1] >= threshold]
 
 
 def _find_primary_thread(profile, device: int) -> int:
