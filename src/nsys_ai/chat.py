@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 """
 chat.py — Agent loop and web-API handlers for the AI chat layer.
 
