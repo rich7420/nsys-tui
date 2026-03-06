@@ -286,7 +286,7 @@ class Profile:
             params += list(trim)
         sql += " GROUP BY s.value, d.value"
         sql += " ORDER BY total_ns DESC"
-        if limit:
+        if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
         with self._lock:
@@ -339,7 +339,7 @@ class Profile:
             params += list(trim)
         sql += " GROUP BY text"
         sql += " ORDER BY total_ns DESC"
-        if limit:
+        if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
         with self._lock:

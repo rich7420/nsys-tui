@@ -103,15 +103,19 @@ def build_profile_summary(
     gpu: int | None,
     trim: tuple[int, int] | None,
     *,
-    kernel_limit: int | None = None,
     nvtx_limit: int | None = None,
 ) -> ProfileSummary:
     kernel_rows = prof.meta.kernel_count
     if gpu is not None:
+        devices = getattr(prof.meta, "devices", [])
         gpu_info = getattr(prof.meta, "gpu_info", None)
         if gpu_info is not None and gpu in gpu_info:
             kernel_rows = gpu_info[gpu].kernel_count
-    agg = prof.aggregate_kernels(gpu, trim=trim, limit=kernel_limit)
+        elif gpu not in devices:
+            # Requested GPU not present in profile; treat as zero rows so
+            # sanity checks stay consistent with the empty aggregation.
+            kernel_rows = 0
+    agg = prof.aggregate_kernels(gpu, trim=trim, limit=None)
     kernels: list[KernelAgg] = []
     for r in agg:
         name = str(r.get("name") or "")
@@ -239,11 +243,10 @@ def diff_profiles(
     trim: tuple[int, int] | None,
     limit: int = 15,
     sort: str = "delta",
-    kernel_limit: int | None = None,
     nvtx_limit: int | None = 200,
 ) -> ProfileDiffSummary:
-    before = build_profile_summary(before_prof, gpu, trim, kernel_limit=kernel_limit, nvtx_limit=nvtx_limit)
-    after = build_profile_summary(after_prof, gpu, trim, kernel_limit=kernel_limit, nvtx_limit=nvtx_limit)
+    before = build_profile_summary(before_prof, gpu, trim, nvtx_limit=nvtx_limit)
+    after = build_profile_summary(after_prof, gpu, trim, nvtx_limit=nvtx_limit)
     warnings = collect_sanity_warnings(before, after)
 
     before_by_key = {k.key: k for k in before.kernels}

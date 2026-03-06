@@ -340,7 +340,7 @@ def format_diff_markdown_multi(
                     c_str = f"**0 → {kd.after_count}**"
                 elif kd.classification == "removed":
                     c_str = f"**{kd.before_count} → 0**"
-                delta_str = ("+" if kd.delta_ns > 0 else "") + _fmt_delta_ns(kd.delta_ns)
+                delta_str = _fmt_delta_ns(kd.delta_ns)
                 md.append(
                     f"| `{delta_str}` | `{kd.name}` | "
                     f"`{_fmt_ns(kd.before_total_ns)}` ({_fmt_pct(kd.before_share)}) | "
