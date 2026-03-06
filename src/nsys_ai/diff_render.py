@@ -401,6 +401,30 @@ def to_diff_json(data: ProfileDiffSummary) -> str:
             }
             for k in data.top_improvements
         ],
+        "nvtx_regressions": [
+            {
+                "text": n.text,
+                "before_total_ns": n.before_total_ns,
+                "after_total_ns": n.after_total_ns,
+                "delta_ns": n.delta_ns,
+                "before_count": n.before_count,
+                "after_count": n.after_count,
+                "classification": n.classification,
+            }
+            for n in data.nvtx_diffs if n.delta_ns > 0
+        ][:20],
+        "nvtx_improvements": [
+            {
+                "text": n.text,
+                "before_total_ns": n.before_total_ns,
+                "after_total_ns": n.after_total_ns,
+                "delta_ns": n.delta_ns,
+                "before_count": n.before_count,
+                "after_count": n.after_count,
+                "classification": n.classification,
+            }
+            for n in data.nvtx_diffs if n.delta_ns < 0
+        ][:20],
         "overlap": {
             "before": data.overlap_before,
             "after": data.overlap_after,
