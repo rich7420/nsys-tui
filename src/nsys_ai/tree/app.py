@@ -30,6 +30,16 @@ from textual.widgets import DataTable, Footer, Header, Input
 from .. import tui_actions
 from ..tui_models import TreeNode
 from .chat import ChatPanel
+from .logic import (
+    build_nodes,
+    compute_summary,
+    find_kernel_occurrence,
+    find_parent,
+    node_index_in_visible,
+    visible_rows_linear,
+    visible_rows_tree,
+)
+from .widgets import BookmarkPanel, BubbleThresholdBar, DetailBar, FilterBar, TreeTable, TrimBar
 
 
 def _kernel_starts_in_json(json_roots: list[dict]) -> set[int]:
@@ -45,16 +55,6 @@ def _kernel_starts_in_json(json_roots: list[dict]) -> set[int]:
 
     _walk(json_roots)
     return starts
-from .logic import (
-    build_nodes,
-    compute_summary,
-    find_kernel_occurrence,
-    find_parent,
-    node_index_in_visible,
-    visible_rows_linear,
-    visible_rows_tree,
-)
-from .widgets import BookmarkPanel, BubbleThresholdBar, DetailBar, FilterBar, TreeTable, TrimBar
 
 
 class NsysTreeApp(App):

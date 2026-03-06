@@ -9,10 +9,8 @@ formats work and Tree/Timeline load without OperationalError.
 """
 import sqlite3
 
-import pytest
-
-from nsys_ai.nvtx_tree import build_nvtx_tree
 from nsys_ai import profile as _profile
+from nsys_ai.nvtx_tree import build_nvtx_tree
 
 
 def test_build_nvtx_tree_text_only_schema(minimal_nsys_db_path):

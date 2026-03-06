@@ -1,5 +1,5 @@
-"""
-Simplified CLI application entrypoint.
+# ruff: noqa: I001
+"""Simplified CLI application entrypoint.
 
 Public surface is focused on web UI and AI workflows:
 - open
@@ -16,6 +16,8 @@ Zero-arg behavior: running ``nsys-ai`` with no arguments shows help (not an
 interactive launcher). ``nsys-ai <profile.sqlite>`` still opens the timeline
 web UI. This is an intentional product choice after the curses→Textual cleanup.
 """
+from __future__ import annotations
+
 import argparse
 import os
 import sys

@@ -179,7 +179,6 @@ async def run_tree_tests():
         check("scroll_to_kernel nonexistent: no crash", app.is_running)
 
         # ── zoom_to_time_range (AI action) ────────────────────────────────
-        old_trim = app._trim
         app.zoom_to_time_range(0.0, 0.1)
         await pilot.pause()
         check("zoom_to_time_range updates trim", True, "no crash")
@@ -387,7 +386,6 @@ async def run_timeline_tests():
 
         await pilot.press("B")
         await pilot.pause()
-        n1_ns = app.cursor_ns
         # ensure canvas has focus for comma/period
         app.query_one("#canvas", TimelineCanvas).focus()
         await pilot.pause()
@@ -418,7 +416,6 @@ async def run_timeline_tests():
               f"bookmarks={len(app._bookmarks)}")
 
         # ── Jump back ─────────────────────────────────────────────────────
-        was_cursor = app.cursor_ns
         await pilot.press("end")
         await pilot.pause()
         await pilot.press("grave_accent")

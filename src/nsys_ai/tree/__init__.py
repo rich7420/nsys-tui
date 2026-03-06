@@ -65,6 +65,7 @@ def _print_static_tree(
     trim: tuple[int, int] | None,
 ) -> None:
     """Rich text fallback for piped / non-TTY output."""
+    # ruff: noqa: I001 - local imports keep CLI startup fast
     from .. import profile as _profile
     from ..nvtx_tree import build_nvtx_tree, format_text as _fmt
     try:
