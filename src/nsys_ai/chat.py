@@ -695,8 +695,7 @@ def stream_agent_loop(
                     model=model, messages=api_messages, tools=tools,
                     tool_choice="none", stream=True, **extra,
                 )
-                for ev in _stream_litellm_content(stream, usage):
-                    yield ev
+                yield from _stream_litellm_content(stream, usage)
             except Exception as e:
                 yield {"type": "text", "content": f"\n\n(Summary skipped: {_friendly_error(model, e)})"}
         yield {"type": "done", "usage": usage}
