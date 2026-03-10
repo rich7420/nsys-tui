@@ -1,21 +1,27 @@
 """
-region_mfu.py — NVTX-region MFU computation for a single Nsight profile.
+region_mfu.py — NVTX-region and kernel-level MFU computation for nsys profiles.
 
 This module implements a higher-level "region MFU" tool that:
 
 - Finds NVTX ranges by name (supports both NVTX_EVENTS.text and textId → StringIds).
+- Finds CUDA kernels by name directly (for profiles without custom NVTX labels).
 - Attributes CUDA kernels to the chosen NVTX range via CUPTI_ACTIVITY_KIND_RUNTIME
   correlationId (same semantics as nvtx_tree.py, but specialized for a single
   region instead of building a full tree).
 - Aggregates time in three ways:
-    * wall_time_ns: NVTX range span (end − start)
+    * wall_time_ns: NVTX range span (end − start), or total kernel span for kernel mode
     * kernel_sum_ns: sum of child kernel durations
     * kernel_union_ns: union-of-intervals over child kernels (no double-counting)
 - Computes MFU for the region given theoretical FLOPs and peak TFLOPS.
 
+Two modes via the ``source`` parameter:
+
+    source="nvtx"   (default) — match an NVTX range, then attribute kernels inside it.
+    source="kernel" — match kernels by name directly, use their aggregate time.
+
 Exports a single public entry point for callers and tools:
 
-    compute_region_mfu(profile_path, nvtx_name, theoretical_flops, ...)
+    compute_region_mfu(profile_path, name, theoretical_flops, source="nvtx", ...)
 
 Error handling is explicit and structured. All public functions return dicts
 with either data fields or an "error" block:
@@ -33,6 +39,11 @@ from .profile import NsightSchema, get_first_gpu_name, resolve_profile_path
 
 ErrorDict = dict[str, Any]
 RowDict = dict[str, Any]
+
+
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE wildcards so ``%`` and ``_`` are treated literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _error(code: str, message: str) -> ErrorDict:
@@ -96,8 +107,8 @@ def find_nvtx_ranges(
         base_sql += f"AND {text_expr} = ? "
         params.append(nvtx_name)
     else:
-        base_sql += f"AND {text_expr} LIKE ? "
-        params.append(f"%{nvtx_name}%")
+        base_sql += f"AND {text_expr} LIKE ? ESCAPE '\\' "
+        params.append(f"%{_escape_like(nvtx_name)}%")
 
     base_sql += "ORDER BY start_ns"
 
@@ -119,6 +130,72 @@ def find_nvtx_ranges(
             }
         )
     return rows
+
+
+def find_kernels_by_name(
+    conn: sqlite3.Connection,
+    kernel_name: str,
+    *,
+    match_mode: str = "contains",
+    device_id: int | None = None,
+) -> list[RowDict]:
+    """
+    Find CUDA kernels whose shortName matches ``kernel_name`` directly.
+
+    This is the kernel-level counterpart to :func:`find_nvtx_ranges`.  It queries
+    CUPTI_ACTIVITY_KIND_KERNEL (or KERNEL_V2) directly by kernel short name,
+    without requiring an enclosing NVTX range.
+
+    Returns a list of dicts with:
+        name, start_ns, end_ns, duration_ns, device_id, stream_id
+    ordered by start_ns ascending.
+    """
+    if not kernel_name:
+        return []
+
+    schema = NsightSchema(conn)
+    if not schema.kernel_table:
+        return []
+
+    kernel_table = schema.kernel_table
+    if match_mode == "exact":
+        name_filter = "s.value = ?"
+        params: list[Any] = [kernel_name]
+    else:
+        name_filter = "s.value LIKE ? ESCAPE '\\'"
+        params = [f"%{_escape_like(kernel_name)}%"]
+
+    dev_filter = ""
+    if device_id is not None:
+        dev_filter = "AND k.deviceId = ?"
+        params.append(int(device_id))
+
+    sql = (
+        f"SELECT s.value AS name, k.start AS start_ns, k.[end] AS end_ns, "
+        f"(k.[end] - k.start) AS duration_ns, k.deviceId, k.streamId "
+        f"FROM {kernel_table} k "
+        f"JOIN StringIds s ON k.shortName = s.id "
+        f"WHERE {name_filter} AND k.[end] > k.start {dev_filter} "
+        f"ORDER BY k.start"
+    )
+
+    cur = conn.execute(sql, params)
+    kernels: list[RowDict] = []
+    for name, start_ns, end_ns, duration_ns, dev, stream_id in cur.fetchall():
+        d = int(duration_ns) if duration_ns is not None else int(end_ns) - int(start_ns)
+        if d <= 0:
+            continue
+        kernels.append(
+            {
+                "name": str(name) if name else "",
+                "start_ns": int(start_ns),
+                "end_ns": int(end_ns),
+                "duration_ns": d,
+                "device_id": int(dev) if dev is not None else None,
+                "stream_id": int(stream_id) if stream_id is not None else None,
+            }
+        )
+    return kernels
 
 
 def select_nvtx_occurrence(matches: list[RowDict], occurrence_index: int) -> RowDict | ErrorDict:
@@ -356,9 +433,10 @@ def _auto_peak_tflops(conn: sqlite3.Connection, explicit_peak: float | None) -> 
 def compute_region_mfu_from_conn(
     conn: sqlite3.Connection,
     profile_path: str | None,
-    nvtx_name: str,
+    name: str,
     theoretical_flops: float,
     *,
+    source: str = "nvtx",
     peak_tflops: float | None = None,
     num_gpus: int = 1,
     occurrence_index: int = 1,
@@ -366,56 +444,85 @@ def compute_region_mfu_from_conn(
     match_mode: str = "contains",
 ) -> RowDict | ErrorDict:
     """
-    Compute MFU for a single NVTX region using an existing SQLite connection.
+    Compute MFU for a named region using an existing SQLite connection.
 
-    This is the main entry point for the chat agent, which already holds an
-    open read-only connection for the profile.
+    Args:
+        name:   NVTX range text (when ``source="nvtx"``) or kernel short name
+                (when ``source="kernel"``).
+        source: ``"nvtx"`` — find an NVTX range and attribute kernels inside it.
+                ``"kernel"`` — find CUDA kernels by name directly.
     """
-    if not nvtx_name:
-        return _error("INVALID_ARGUMENT", "nvtx_name must be a non-empty string.")
+    if not name:
+        return _error("INVALID_ARGUMENT", "name must be a non-empty string.")
     if theoretical_flops <= 0:
         return _error(
             "INVALID_ARGUMENT",
             "theoretical_flops must be positive (e.g. model_flops_per_step).",
         )
+    if source not in ("nvtx", "kernel"):
+        return _error("INVALID_ARGUMENT", "source must be 'nvtx' or 'kernel'.")
 
-    # 1) Find NVTX ranges
-    matches = find_nvtx_ranges(conn, nvtx_name, match_mode=match_mode)
-    chosen = select_nvtx_occurrence(matches, occurrence_index)
-    if "error" in chosen:
-        return chosen
-
-    nvtx_start_ns = int(chosen["start_ns"])
-    nvtx_end_ns = int(chosen["end_ns"])
-    global_tid = chosen.get("global_tid")
-
-    wall_time_ns = max(0, nvtx_end_ns - nvtx_start_ns)
-    if wall_time_ns <= 0:
-        return _error(
-            "NO_KERNELS_IN_REGION",
-            "Selected NVTX range has non-positive duration.",
+    # ---------------------------------------------------------------
+    # Branch: source="kernel" — query kernels directly by name
+    # ---------------------------------------------------------------
+    if source == "kernel":
+        kernels = find_kernels_by_name(
+            conn, name, match_mode=match_mode, device_id=device_id,
         )
+        if not kernels:
+            return _error(
+                "KERNEL_NOT_FOUND",
+                f"No kernels matching '{name}' found in the profile.",
+            )
+        summary = summarize_region_kernel_times(kernels)
+        matched_name = kernels[0]["name"]
+        kernel_sum_s = summary["kernel_sum_ns"] / 1e9
+        kernel_union_s = summary["kernel_union_ns"] / 1e9
+        # wall_time = span from first kernel start to last kernel end
+        wall_time_ns = max(k["end_ns"] for k in kernels) - min(k["start_ns"] for k in kernels)
+        wall_time_s = max(wall_time_ns / 1e9, kernel_union_s)
 
-    # 2) Attribute kernels
-    kernels = get_region_kernels(
-        conn,
-        nvtx_start_ns=nvtx_start_ns,
-        nvtx_end_ns=nvtx_end_ns,
-        global_tid=global_tid,
-        device_id=device_id,
-    )
-    summary = summarize_region_kernel_times(kernels)
-    if summary["kernel_count"] == 0:
-        return _error(
-            "NO_KERNELS_IN_REGION",
-            "No kernels found inside the selected NVTX region (after thread/device filters).",
+    # ---------------------------------------------------------------
+    # Branch: source="nvtx" (default) — NVTX range → kernel attribution
+    # ---------------------------------------------------------------
+    else:
+        matches = find_nvtx_ranges(conn, name, match_mode=match_mode)
+        chosen = select_nvtx_occurrence(matches, occurrence_index)
+        if "error" in chosen:
+            return chosen
+
+        nvtx_start_ns = int(chosen["start_ns"])
+        nvtx_end_ns = int(chosen["end_ns"])
+        global_tid = chosen.get("global_tid")
+
+        wall_time_ns = max(0, nvtx_end_ns - nvtx_start_ns)
+        if wall_time_ns <= 0:
+            return _error(
+                "NO_KERNELS_IN_REGION",
+                "Selected NVTX range has non-positive duration.",
+            )
+
+        kernels = get_region_kernels(
+            conn,
+            nvtx_start_ns=nvtx_start_ns,
+            nvtx_end_ns=nvtx_end_ns,
+            global_tid=global_tid,
+            device_id=device_id,
         )
+        summary = summarize_region_kernel_times(kernels)
+        if summary["kernel_count"] == 0:
+            return _error(
+                "NO_KERNELS_IN_REGION",
+                "No kernels found inside the selected NVTX region (after thread/device filters).",
+            )
+        matched_name = chosen.get("text", "")
+        wall_time_s = wall_time_ns / 1e9
+        kernel_sum_s = summary["kernel_sum_ns"] / 1e9 if summary["kernel_sum_ns"] > 0 else 0.0
+        kernel_union_s = summary["kernel_union_ns"] / 1e9 if summary["kernel_union_ns"] > 0 else 0.0
 
-    wall_time_s = wall_time_ns / 1e9
-    kernel_sum_s = summary["kernel_sum_ns"] / 1e9 if summary["kernel_sum_ns"] > 0 else 0.0
-    kernel_union_s = summary["kernel_union_ns"] / 1e9 if summary["kernel_union_ns"] > 0 else 0.0
-
-    # 3) Resolve peak_tflops
+    # ---------------------------------------------------------------
+    # Common: resolve peak, compute MFU, return result
+    # ---------------------------------------------------------------
     peak_info = _auto_peak_tflops(conn, peak_tflops)
     if "error" in peak_info:
         return peak_info
@@ -423,7 +530,6 @@ def compute_region_mfu_from_conn(
     effective_num_gpus = max(1, int(num_gpus))
     effective_peak = peak_per_gpu * effective_num_gpus
 
-    # 4) Compute MFU metrics
     metrics = compute_mfu_metrics_for_region(
         theoretical_flops=theoretical_flops,
         peak_tflops=effective_peak,
@@ -435,10 +541,11 @@ def compute_region_mfu_from_conn(
         return metrics
 
     return {
-        "nvtx_name": nvtx_name,
-        "matched_text": chosen.get("text", ""),
+        "source": source,
+        "name": name,
+        "matched_text": matched_name,
         "match_mode": match_mode,
-        "occurrence_index": int(chosen.get("occurrence_index", occurrence_index)),
+        "occurrence_index": int(chosen.get("occurrence_index", occurrence_index)) if source == "nvtx" else None,
         "device_id": int(device_id) if device_id is not None else None,
         "profile_path": profile_path,
         "num_gpus": effective_num_gpus,
@@ -457,9 +564,10 @@ def compute_region_mfu_from_conn(
 
 def compute_region_mfu(
     profile_path: str,
-    nvtx_name: str,
+    name: str,
     theoretical_flops: float,
     *,
+    source: str = "nvtx",
     peak_tflops: float | None = None,
     num_gpus: int = 1,
     occurrence_index: int = 1,
@@ -485,8 +593,9 @@ def compute_region_mfu(
         return compute_region_mfu_from_conn(
             conn,
             sqlite_path,
-            nvtx_name,
+            name,
             theoretical_flops,
+            source=source,
             peak_tflops=peak_tflops,
             num_gpus=num_gpus,
             occurrence_index=occurrence_index,

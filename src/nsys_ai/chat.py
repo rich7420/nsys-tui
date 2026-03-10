@@ -258,12 +258,20 @@ def run_agent_loop(
                     }
                 )
             else:
+                # Tools only implemented in the streaming path get an explicit message
+                if name in {"get_gpu_peak_tflops", "compute_mfu", "compute_region_mfu"}:
+                    tool_result = (
+                        f"Tool '{name}' is only supported in the streaming API path "
+                        "and cannot be executed in this non-streaming request."
+                    )
+                else:
+                    tool_result = "Not executed."
                 api_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc_id,
                         "name": name,
-                        "content": "Not executed.",
+                        "content": tool_result,
                     }
                 )
 
@@ -708,16 +716,16 @@ def stream_agent_loop(
                         except json.JSONDecodeError:
                             args = {}
                         # Validate required params before calling
-                        nvtx_name = args.get("nvtx_name") or ""
+                        region_name = args.get("name") or ""
                         raw_flops = args.get("theoretical_flops")
-                        if not nvtx_name:
+                        if not region_name:
                             result = {
                                 "error": {
                                     "code": "MISSING_PARAMETER",
-                                    "message": "nvtx_name is required.",
+                                    "message": "name is required (NVTX range or kernel name).",
                                 }
                             }
-                        elif raw_flops is None or float(raw_flops) <= 0:
+                        elif raw_flops is None:
                             result = {
                                 "error": {
                                     "code": "MISSING_PARAMETER",
@@ -726,25 +734,38 @@ def stream_agent_loop(
                                 }
                             }
                         else:
-                            result = compute_region_mfu_from_conn(
-                                conn,
-                                sqlite_path,
-                                nvtx_name,
-                                float(raw_flops),
-                                peak_tflops=(
-                                    float(args["peak_tflops"])
-                                    if "peak_tflops" in args and args["peak_tflops"] is not None
-                                    else None
-                                ),
-                                num_gpus=int(args.get("num_gpus") or 1),
-                                occurrence_index=int(args.get("occurrence_index") or 1),
-                                device_id=(
-                                    int(args["device_id"])
-                                    if "device_id" in args and args["device_id"] is not None
-                                    else None
-                                ),
-                                match_mode=str(args.get("match_mode") or "contains"),
-                            )
+                            try:
+                                flops_val = float(raw_flops)
+                            except (ValueError, TypeError):
+                                flops_val = -1.0
+                            if flops_val <= 0:
+                                result = {
+                                    "error": {
+                                        "code": "INVALID_PARAMETER",
+                                        "message": f"theoretical_flops must be a positive number, got: {raw_flops!r}",
+                                    }
+                                }
+                            else:
+                                result = compute_region_mfu_from_conn(
+                                    conn,
+                                    sqlite_path,
+                                    region_name,
+                                    flops_val,
+                                    source=str(args.get("source") or "nvtx"),
+                                    peak_tflops=(
+                                        float(args["peak_tflops"])
+                                        if "peak_tflops" in args and args["peak_tflops"] is not None
+                                        else None
+                                    ),
+                                    num_gpus=int(args.get("num_gpus") or 1),
+                                    occurrence_index=int(args.get("occurrence_index") or 1),
+                                    device_id=(
+                                        int(args["device_id"])
+                                        if "device_id" in args and args["device_id"] is not None
+                                        else None
+                                    ),
+                                    match_mode=str(args.get("match_mode") or "contains"),
+                                )
                     api_messages.append(
                         {
                             "role": "tool",

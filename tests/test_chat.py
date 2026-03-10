@@ -117,6 +117,11 @@ def test_tools_openai():
     }
     nav = next(t for t in tools if t["function"]["name"] == "navigate_to_kernel")
     assert "target_name" in nav["function"]["parameters"]["properties"]
+    region = next(t for t in tools if t["function"]["name"] == "compute_region_mfu")
+    props = region["function"]["parameters"]["properties"]
+    assert "name" in props
+    assert "source" in props
+    assert "num_gpus" in props
     zoom = next(t for t in tools if t["function"]["name"] == "zoom_to_time_range")
     assert "start_s" in zoom["function"]["parameters"]["properties"]
     assert "end_s" in zoom["function"]["parameters"]["properties"]

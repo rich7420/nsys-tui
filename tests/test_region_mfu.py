@@ -123,7 +123,8 @@ def test_compute_region_mfu_from_conn_happy_path(tmp_path):
             match_mode="contains",
         )
         assert "error" not in result
-        assert result["nvtx_name"] == "FlashAttention"
+        assert result["name"] == "FlashAttention"
+        assert result["source"] == "nvtx"
         assert result["matched_text"] == "FlashAttention"
         assert result["kernel_count"] == 1
         assert result["wall_time_s"] > 0
@@ -248,5 +249,30 @@ def test_compute_region_mfu_from_conn_multi_gpu(tmp_path):
         assert r2["effective_peak_tflops"] == r1["peak_tflops_per_gpu"] * 2
         # MFU halved with 2x peak
         assert abs(r2["mfu_pct_wall"] - r1["mfu_pct_wall"] / 2) < 0.01
+    finally:
+        conn.close()
+
+
+def test_compute_region_mfu_kernel_mode(tmp_path):
+    """source='kernel' queries kernels directly by shortName, no NVTX needed."""
+    db = tmp_path / "kernel_mode.sqlite"
+    _make_min_region_db(str(db))
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        result = compute_region_mfu_from_conn(
+            conn,
+            str(db),
+            "k_flash",  # matches kernel shortName via StringIds
+            theoretical_flops=1e18,
+            source="kernel",
+            peak_tflops=None,
+            device_id=0,
+        )
+        assert "error" not in result, f"Unexpected error: {result}"
+        assert result["source"] == "kernel"
+        assert result["kernel_count"] == 1
+        assert "mfu_pct_wall" in result
+        assert "mfu_pct_kernel_union" in result
     finally:
         conn.close()

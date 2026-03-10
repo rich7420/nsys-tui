@@ -47,30 +47,35 @@ TOOL_COMPUTE_MFU = {
     },
 }
 
-# Region-level MFU tool: compute MFU for a specific NVTX region inside the profile.
+# Region-level MFU tool: compute MFU for a specific NVTX region or kernel.
 # The backend injects the current profile_path; the model MUST NOT pass a profile_path argument.
 TOOL_COMPUTE_REGION_MFU = {
     "type": "function",
     "function": {
         "name": "compute_region_mfu",
         "description": (
-            "Compute MFU (Model FLOPs Utilization) for a specific NVTX region inside the current profile. "
-            "Use this when the user asks for MFU of a named block like 'Forward Pass' or 'FlashAttention'. "
-            "BEFORE calling this tool, you MUST first compute theoretical_flops using the FLOPs formulas "
-            "from the MFU REFERENCE section in the system prompt (ask the user for model params if needed). "
-            "The tool automatically finds the NVTX range, attributes kernels via CUPTI_ACTIVITY_KIND_RUNTIME, "
-            "and computes both wall-time and GPU-active-time MFU. Do NOT pass a profile_path argument."
+            "Compute MFU (Model FLOPs Utilization) for a named NVTX region or CUDA kernel. "
+            "Two modes: (1) source='nvtx' — finds an NVTX range by name, attributes kernels inside it; "
+            "(2) source='kernel' — finds CUDA kernels by name directly (use when no custom NVTX labels exist). "
+            "BEFORE calling this tool, compute theoretical_flops using the MFU REFERENCE formulas. "
+            "Do NOT pass a profile_path argument."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "nvtx_name": {
+                "name": {
                     "type": "string",
-                    "description": "NVTX name substring to match (e.g. 'Forward Pass', 'FlashAttention').",
+                    "description": "Name to match: NVTX range text (source='nvtx') or kernel shortName (source='kernel'). Substring match by default.",
                 },
                 "theoretical_flops": {
                     "type": "number",
                     "description": "Theoretical model FLOPs for this region, computed from model architecture formulas.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "'nvtx' to match NVTX ranges (default), 'kernel' to match CUDA kernels directly by name.",
+                    "enum": ["nvtx", "kernel"],
+                    "default": "nvtx",
                 },
                 "peak_tflops": {
                     "type": "number",
@@ -83,21 +88,21 @@ TOOL_COMPUTE_REGION_MFU = {
                 },
                 "occurrence_index": {
                     "type": "integer",
-                    "description": "Which matching NVTX occurrence to use (1-based). Default is 1.",
+                    "description": "Which matching NVTX occurrence to use (1-based, only for source='nvtx'). Default 1.",
                     "default": 1,
                 },
                 "device_id": {
                     "type": "integer",
-                    "description": "Optional CUDA deviceId to restrict kernels to a single GPU. If omitted, all devices are considered.",
+                    "description": "Optional CUDA deviceId to restrict to a single GPU.",
                 },
                 "match_mode": {
                     "type": "string",
-                    "description": "How to match nvtx_name against NVTX text. 'contains' uses a substring match; 'exact' requires full equality.",
+                    "description": "'contains' (substring, default) or 'exact'.",
                     "enum": ["contains", "exact"],
                     "default": "contains",
                 },
             },
-            "required": ["nvtx_name", "theoretical_flops"],
+            "required": ["name", "theoretical_flops"],
         },
     },
 }
@@ -261,18 +266,18 @@ def _build_system_prompt(
         "client; you do not wait for a result. For `query_profile_db`: the backend runs the "
         "query and returns rows; use them in your answer.\n"
         "   - Do NOT output code blocks or JSON for navigation - use the actual tool call mechanism only.\n"
-        "5. If a requested kernel is not in the context, politely say it is not visible or "
-        "does not exist.\n"
+        "5. NEVER REFUSE to calculate MFU when the user asks. Even if the result is approximate or the time "
+        "covers only a single kernel, compute it. Use compute_region_mfu with source='kernel' to get "
+        "kernel execution time directly. The user can judge whether the result is meaningful.\n"
         "6. For whole-step MFU: (1) Call get_gpu_peak_tflops to get peak_tflops from the profile GPU. "
         "   (2) Use query_profile_db to get step_time_s (e.g. (MAX([end])-MIN(start))/1e9). "
         "   (3) Ask the user for model_flops_per_step (nsys does not store it). Do NOT call compute_mfu until the user "
         "has provided it — after asking, end your response and wait for their reply; only then call compute_mfu with that value. "
         "If get_gpu_peak_tflops returns an error, ask the user for peak_tflops as well.\n"
-        "7. For MFU of a specific NVTX region (e.g. 'Forward Pass', 'FlashAttention'): "
-        "   call compute_region_mfu instead of writing SQL yourself. Provide nvtx_name, theoretical_flops, and optional "
-        "peak_tflops / occurrence_index / device_id / num_gpus. The backend will: (a) find the matching NVTX range, "
-        "(b) attribute kernels using CUPTI_ACTIVITY_KIND_RUNTIME, and (c) compute both wall-time and GPU-active-time MFU. "
-        "Use its structured result to explain how effective that region is.\n"
+        "7. For MFU of a specific NVTX region or kernel: use compute_region_mfu. "
+        "   - For NVTX ranges (e.g. 'Forward Pass'): set source='nvtx', name=<nvtx_text>. "
+        "   - For kernels (e.g. 'flash_fwd_kernel'): set source='kernel', name=<kernel_name>. "
+        "   The tool handles both modes. Provide theoretical_flops and optional peak_tflops / num_gpus.\n"
         "   IMPORTANT: To compute theoretical_flops, ask the user for model parameters and use the formulas below.\n"
         "\n"
         "=== MFU REFERENCE FORMULAS ===\n"
