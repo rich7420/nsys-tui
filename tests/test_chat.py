@@ -87,13 +87,18 @@ def test_get_available_models(monkeypatch):
 
 
 def test_build_system_prompt():
-    """System prompt contains ui_context as JSON code block."""
+    """System prompt contains ui_context as JSON code block and MFU reference formulas."""
     ctx = {"view_state": {"scope": "all"}, "global_top_kernels": []}
     out = chat_mod._build_system_prompt(ctx)
     assert "```json" in out
     assert "view_state" in out
     assert "global_top_kernels" in out
     assert "CURRENT UI CONTEXT" in out
+    # MFU reference formulas
+    assert "MFU REFERENCE FORMULAS" in out
+    assert "flops_per_layer" in out
+    assert "activation checkpointing" in out
+    assert "num_gpus" in out
 
 
 def test_tools_openai():
@@ -119,6 +124,8 @@ def test_tools_openai():
     assert "nvtx_name" in fit["function"]["parameters"]["properties"]
     assert "start_s" in fit["function"]["parameters"]["properties"]
     assert "end_s" in fit["function"]["parameters"]["properties"]
+    region = next(t for t in tools if t["function"]["name"] == "compute_region_mfu")
+    assert "num_gpus" in region["function"]["parameters"]["properties"]
 
 
 def test_parse_tool_call_navigate():

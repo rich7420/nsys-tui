@@ -717,6 +717,7 @@ def stream_agent_loop(
                                 if "peak_tflops" in args and args["peak_tflops"] is not None
                                 else None
                             ),
+                            num_gpus=int(args.get("num_gpus") or 1),
                             occurrence_index=int(args.get("occurrence_index") or 1),
                             device_id=(
                                 int(args["device_id"])

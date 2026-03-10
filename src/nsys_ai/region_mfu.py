@@ -360,6 +360,7 @@ def compute_region_mfu_from_conn(
     theoretical_flops: float,
     *,
     peak_tflops: float | None = None,
+    num_gpus: int = 1,
     occurrence_index: int = 1,
     device_id: int | None = None,
     match_mode: str = "contains",
@@ -418,12 +419,14 @@ def compute_region_mfu_from_conn(
     peak_info = _auto_peak_tflops(conn, peak_tflops)
     if "error" in peak_info:
         return peak_info
-    peak = float(peak_info["peak_tflops"])
+    peak_per_gpu = float(peak_info["peak_tflops"])
+    effective_num_gpus = max(1, int(num_gpus))
+    effective_peak = peak_per_gpu * effective_num_gpus
 
     # 4) Compute MFU metrics
     metrics = compute_mfu_metrics_for_region(
         theoretical_flops=theoretical_flops,
-        peak_tflops=peak,
+        peak_tflops=effective_peak,
         wall_time_s=wall_time_s,
         kernel_sum_s=kernel_sum_s or wall_time_s,
         kernel_union_s=kernel_union_s or wall_time_s,
@@ -438,6 +441,9 @@ def compute_region_mfu_from_conn(
         "occurrence_index": int(chosen.get("occurrence_index", occurrence_index)),
         "device_id": int(device_id) if device_id is not None else None,
         "profile_path": profile_path,
+        "num_gpus": effective_num_gpus,
+        "peak_tflops_per_gpu": peak_per_gpu,
+        "effective_peak_tflops": effective_peak,
         "wall_time_s": round(wall_time_s, 6),
         "gpu_kernel_sum_s": round(kernel_sum_s, 6),
         "gpu_kernel_union_s": round(kernel_union_s, 6),
@@ -455,6 +461,7 @@ def compute_region_mfu(
     theoretical_flops: float,
     *,
     peak_tflops: float | None = None,
+    num_gpus: int = 1,
     occurrence_index: int = 1,
     device_id: int | None = None,
     match_mode: str = "contains",
@@ -481,6 +488,7 @@ def compute_region_mfu(
             nvtx_name,
             theoretical_flops,
             peak_tflops=peak_tflops,
+            num_gpus=num_gpus,
             occurrence_index=occurrence_index,
             device_id=device_id,
             match_mode=match_mode,

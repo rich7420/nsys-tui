@@ -223,3 +223,30 @@ def test_compute_region_mfu_from_conn_textid_schema(tmp_path):
         assert "mfu_pct_wall" in result
     finally:
         conn.close()
+
+
+def test_compute_region_mfu_from_conn_multi_gpu(tmp_path):
+    """num_gpus=2 doubles effective peak and halves MFU vs num_gpus=1."""
+    db = tmp_path / "multi_gpu.sqlite"
+    _make_min_region_db(str(db))
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        r1 = compute_region_mfu_from_conn(
+            conn, str(db), "FlashAttention", 1e18,
+            peak_tflops=None, num_gpus=1, device_id=0,
+        )
+        r2 = compute_region_mfu_from_conn(
+            conn, str(db), "FlashAttention", 1e18,
+            peak_tflops=None, num_gpus=2, device_id=0,
+        )
+        assert "error" not in r1 and "error" not in r2
+        # num_gpus field
+        assert r1["num_gpus"] == 1
+        assert r2["num_gpus"] == 2
+        # effective peak scales
+        assert r2["effective_peak_tflops"] == r1["peak_tflops_per_gpu"] * 2
+        # MFU halved with 2x peak
+        assert abs(r2["mfu_pct_wall"] - r1["mfu_pct_wall"] / 2) < 0.01
+    finally:
+        conn.close()

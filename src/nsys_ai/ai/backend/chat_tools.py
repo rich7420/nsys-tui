@@ -56,6 +56,8 @@ TOOL_COMPUTE_REGION_MFU = {
         "description": (
             "Compute MFU (Model FLOPs Utilization) for a specific NVTX region inside the current profile. "
             "Use this when the user asks for MFU of a named block like 'Forward Pass' or 'FlashAttention'. "
+            "BEFORE calling this tool, you MUST first compute theoretical_flops using the FLOPs formulas "
+            "from the MFU REFERENCE section in the system prompt (ask the user for model params if needed). "
             "The tool automatically finds the NVTX range, attributes kernels via CUPTI_ACTIVITY_KIND_RUNTIME, "
             "and computes both wall-time and GPU-active-time MFU. Do NOT pass a profile_path argument."
         ),
@@ -68,11 +70,16 @@ TOOL_COMPUTE_REGION_MFU = {
                 },
                 "theoretical_flops": {
                     "type": "number",
-                    "description": "Theoretical model FLOPs for this region (e.g. model_flops_per_step for the step).",
+                    "description": "Theoretical model FLOPs for this region, computed from model architecture formulas.",
                 },
                 "peak_tflops": {
                     "type": "number",
-                    "description": "Optional GPU peak TFLOPS (BF16/FP16). If omitted, the tool will infer it from the profile GPU.",
+                    "description": "Optional per-GPU peak TFLOPS (BF16/FP16). If omitted, inferred from profile GPU.",
+                },
+                "num_gpus": {
+                    "type": "integer",
+                    "description": "Number of GPUs used (world_size). Peak is scaled by this. Default 1.",
+                    "default": 1,
                 },
                 "occurrence_index": {
                     "type": "integer",
@@ -263,9 +270,33 @@ def _build_system_prompt(
         "If get_gpu_peak_tflops returns an error, ask the user for peak_tflops as well.\n"
         "7. For MFU of a specific NVTX region (e.g. 'Forward Pass', 'FlashAttention'): "
         "   call compute_region_mfu instead of writing SQL yourself. Provide nvtx_name, theoretical_flops, and optional "
-        "peak_tflops / occurrence_index / device_id. The backend will: (a) find the matching NVTX range, "
-        " (b) attribute kernels using CUPTI_ACTIVITY_KIND_RUNTIME, and (c) compute both wall-time and GPU-active-time MFU. "
-        "Use its structured result to explain how effective that region is."
+        "peak_tflops / occurrence_index / device_id / num_gpus. The backend will: (a) find the matching NVTX range, "
+        "(b) attribute kernels using CUPTI_ACTIVITY_KIND_RUNTIME, and (c) compute both wall-time and GPU-active-time MFU. "
+        "Use its structured result to explain how effective that region is.\n"
+        "   IMPORTANT: To compute theoretical_flops, ask the user for model parameters and use the formulas below.\n"
+        "\n"
+        "=== MFU REFERENCE FORMULAS ===\n"
+        "Use these formulas to compute theoretical_flops BEFORE calling compute_mfu or compute_region_mfu.\n"
+        "The nsys profile does NOT store model FLOPs — you must calculate them from model architecture.\n\n"
+        "## Transformer Per-Layer FLOPs (forward pass, per token sequence)\n"
+        "  Variables: H=hidden_dim, S=seq_len, C=context_len (cross-attn), ffn=ffn_dim\n"
+        "  - QKV + output projection:  8 * H * H * S\n"
+        "  - Cross-attn projections:   4 * H * H * S + 4 * H * H * C  (skip if no cross-attn)\n"
+        "  - MLP (up + down):          4 * H * ffn * S\n"
+        "  - Self-attn matmuls (QK^T + AV): 4 * S * S * H\n"
+        "  - Cross-attn matmuls:       4 * S * C * H  (skip if no cross-attn)\n"
+        "  flops_per_layer = sum of above\n\n"
+        "## Quick Estimate (standard Transformer)\n"
+        "  flops_per_step ≈ 6 * N_params * tokens_per_step  (forward + backward)\n\n"
+        "## Full Step FLOPs\n"
+        "  theoretical_flops = batch_size * flops_per_layer * num_layers * multiplier * grad_accum_steps\n"
+        "  - multiplier = 3 (no activation checkpointing: 1 fwd + 2 bwd)\n"
+        "  - multiplier = 4 (full activation checkpointing: 1 fwd + 1 recompute + 2 bwd)\n\n"
+        "## Multi-GPU\n"
+        "  When using data parallelism, pass num_gpus=world_size to compute_region_mfu.\n"
+        "  The tool will scale peak_tflops by num_gpus automatically.\n"
+        "  Ask the user for num_gpus if the profile uses multiple GPUs.\n"
+        "=============================\n"
     )
 
 
