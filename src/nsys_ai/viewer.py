@@ -298,19 +298,28 @@ def generate_timeline_html(
         trim_label = "Progressive"
         progressive = "1"
 
+    def _escape_json_for_html_script(json_str: str) -> str:
+        """Escape '</' in JSON so it can be safely embedded in a <script> block."""
+        return json_str.replace("</", "<\\/")
+
+    safe_data_json = _escape_json_for_html_script(data_json)
+    safe_gpu_info_json = _escape_json_for_html_script(gpu_info_json)
+    safe_gpu_label_json = _escape_json_for_html_script(gpu_label_json)
+    safe_findings_json = _escape_json_for_html_script(json.dumps(findings_data or []))
+
     tmpl = _load_template("timeline.html")
     return tmpl.safe_substitute(
-        DATA=data_json,
+        DATA=safe_data_json,
         GPU_LABEL=gpu_label,
-        GPU_LABEL_JSON=gpu_label_json,
-        GPU_INFO_JSON=gpu_info_json,
+        GPU_LABEL_JSON=safe_gpu_label_json,
+        GPU_INFO_JSON=safe_gpu_info_json,
         TRIM_LABEL=trim_label,
         PROGRESSIVE=progressive,
         TIMELINE_CSS_HREF=timeline_css_href,
         TIMELINE_JS_SRC=timeline_js_src,
         API_PREFIX=api_prefix,
-        FINDINGS_JSON=json.dumps(findings_data or []),
-        PROFILE_PATH=profile_path.replace("'", "\\'" ) if profile_path else "",
+        FINDINGS_JSON=safe_findings_json,
+        PROFILE_PATH=json.dumps(profile_path) if profile_path is not None else "null",
     )
 
 

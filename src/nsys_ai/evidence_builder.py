@@ -150,7 +150,7 @@ LIMIT ?"""
         ]
 
     def _kernel_hotspots(self, top_n: int = 3) -> list[Finding]:
-        """Single longest instance of each top compute kernel → highlight."""
+        """Top longest non-NCCL kernel instances → highlight."""
         sql = """\
 SELECT s.value AS name, k.start, k.[end], k.streamId,
        (k.[end] - k.start) AS dur_ns

@@ -52,6 +52,18 @@ from .region_mfu import compute_region_mfu_from_conn, compute_theoretical_flops
 _log = logging.getLogger(__name__)
 _telemetry_log = logging.getLogger("nsys_ai.telemetry")
 
+# Simple module-level counter to assign indices to findings created via
+# the `submit_finding` tool. This allows the model to refer to them as
+# "[Finding N]" using a concrete, server-tracked index.
+_finding_counter = 0
+
+
+def _next_finding_index() -> int:
+    """Allocate and return the next finding index."""
+    global _finding_counter
+    _finding_counter += 1
+    return _finding_counter
+
 
 # ---------------------------------------------------------------------------
 # Skill routing — keyword-based on-demand injection
@@ -902,7 +914,12 @@ def stream_agent_loop(
                         finding_args = json.loads(args_str) if args_str.strip() else {}
                     except json.JSONDecodeError:
                         finding_args = {}
-                    yield {"type": "finding", "finding": finding_args}
+                    # Allocate a concrete index for this finding so the
+                    # model can reference it as "[Finding N]".
+                    finding_index = _next_finding_index()
+                    finding_payload = dict(finding_args)
+                    finding_payload["index"] = finding_index
+                    yield {"type": "finding", "finding": finding_payload}
                     api_messages.append(
                         {
                             "role": "tool",
@@ -910,8 +927,11 @@ def stream_agent_loop(
                             "name": name,
                             "content": json.dumps({
                                 "status": "submitted",
-                                "note": "Finding overlaid on timeline. "
-                                "Reference as [Finding N] in your answer.",
+                                "index": finding_index,
+                                "note": (
+                                    "Finding overlaid on timeline. "
+                                    f"Reference as [Finding {finding_index}] in your answer."
+                                ),
                             }),
                         }
                     )

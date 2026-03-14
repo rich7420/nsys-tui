@@ -21,6 +21,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import quote
 
+_FINDINGS_LOCK = threading.Lock()
+
 # Bounded thread pool: fixed worker count, request queue with max size.
 # Workers are released when each request finishes (finish_request + shutdown_request).
 # See docs/chat-thread-pool.md.
@@ -194,7 +196,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             self._handle_data()
             return
         if path == "/api/findings":
-            self._json_response(self._findings)
+            with _FINDINGS_LOCK:
+                self._json_response(list(self._findings))
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -365,12 +368,14 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             device = self.devices[0] if self.devices else 0
             builder = EvidenceBuilder(self.prof, device=device)
             report = builder.build()
-            self.__class__._findings = [f.to_dict() for f in report.findings]
+            with _FINDINGS_LOCK:
+                self.__class__._findings = [f.to_dict() for f in report.findings]
+                findings = list(self.__class__._findings)
             print(
-                f"[analyze] Generated {len(self._findings)} finding(s)",
+                f"[analyze] Generated {len(findings)} finding(s)",
                 flush=True,
             )
-            self._json_response(self._findings)
+            self._json_response(findings)
         except Exception as e:
             print(f"[analyze] Error: {e}", flush=True)
             self._json_response({"error": str(e)}, 500)
@@ -381,8 +386,9 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(content_length) if content_length else b"{}"
             finding_dict = json.loads(raw.decode("utf-8"))
-            self.__class__._findings.append(finding_dict)
-            idx = len(self._findings)
+            with _FINDINGS_LOCK:
+                self.__class__._findings.append(finding_dict)
+                idx = len(self.__class__._findings)
             self._json_response({"index": idx})
         except Exception as e:
             self._json_response({"error": str(e)}, 400)
@@ -709,10 +715,10 @@ class _EvidenceHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_data(self):
-        """Return kernel data for a time window from _ViewerHandler's prebuilt cache."""
+        """Return kernel data for a time window from this handler's prebuilt cache."""
         from urllib.parse import parse_qs, urlparse
 
-        prebuilt = _ViewerHandler._prebuilt_data
+        prebuilt = self.__class__._prebuilt_data
         if not prebuilt:
             self._json_response({"error": "no prebuilt data"}, 500)
             return
@@ -785,7 +791,7 @@ def serve_evidence(
         )
     elapsed = _time.monotonic() - t0
     print(f"Pre-build complete in {elapsed:.1f}s", flush=True)
-    _ViewerHandler._prebuilt_data = prebuilt
+    _EvidenceHandler._prebuilt_data = prebuilt
     _ViewerHandler._prebuilt_nvtx_mode = "full"
 
     server = _ThreadedHTTPServer(("127.0.0.1", port), _EvidenceHandler)
