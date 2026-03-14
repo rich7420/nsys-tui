@@ -253,9 +253,11 @@ def generate_timeline_html(
     device,
     trim: tuple[int, int] | None = None,
     *,
+    findings_data: list[dict] | None = None,
     timeline_css_href: str = "/assets/timeline.css",
     timeline_js_src: str = "/assets/timeline.js",
     api_prefix: str = "",
+    profile_path: str = "",
 ) -> str:
     """Generate a standalone HTML page with the horizontal timeline viewer.
 
@@ -307,6 +309,8 @@ def generate_timeline_html(
         TIMELINE_CSS_HREF=timeline_css_href,
         TIMELINE_JS_SRC=timeline_js_src,
         API_PREFIX=api_prefix,
+        FINDINGS_JSON=json.dumps(findings_data or []),
+        PROFILE_PATH=profile_path.replace("'", "\\'" ) if profile_path else "",
     )
 
 
@@ -333,3 +337,70 @@ def write_timeline_html(prof, device: int, trim: tuple[int, int], path: str):
         f.write(_read_template_text("timeline.css"))
     with open(os.path.join(out_dir, js_name), "w", encoding="utf-8", newline="\n") as f:
         f.write(_read_template_text("timeline.js"))
+
+
+def generate_evidence_html(
+    prof,
+    device,
+    findings_data: list[dict],
+    title: str = "Evidence View",
+    *,
+    trim: tuple[int, int] | None = None,
+    evidence_css_href: str = "/assets/evidence.css",
+    evidence_js_src: str = "/assets/evidence.js",
+    api_prefix: str = "",
+) -> str:
+    """Generate the Evidence View HTML page.
+
+    *findings_data* is a list of Finding dicts (from annotation.py).
+    *device* may be a single int or list of ints.
+    When *trim* is None, progressive mode is used (kernels fetched via API).
+    """
+    from collections.abc import Sequence
+
+    devices: list[int] = list(device) if isinstance(device, Sequence) else [device]
+
+    # GPU label
+    gpu_type = "GPU"
+    for dev in devices:
+        gpu_info = prof.meta.gpu_info.get(dev)
+        if gpu_info:
+            gpu_type = gpu_info.name
+    gpu_label = f"{len(devices)}× {gpu_type}" if len(devices) > 1 else gpu_type
+    gpu_label_json = json.dumps(gpu_label)
+
+    # Time range
+    time_range = list(prof.meta.time_range)
+
+    if trim is not None:
+        # Bake kernel data into HTML
+        gpu_entries = build_timeline_gpu_data(
+            prof, devices, trim, include_kernels=True, include_nvtx=False
+        )
+        kernels = []
+        streams_set = set()
+        for entry in gpu_entries:
+            for k in entry.get("kernels", []):
+                kernels.append(k)
+                streams_set.add(k.get("stream", 0))
+        progressive = ""
+    else:
+        kernels = []
+        streams_set = set()
+        progressive = "1"
+
+    streams = sorted(streams_set)
+
+    tmpl = _load_template("evidence.html")
+    return tmpl.safe_substitute(
+        TITLE=title,
+        FINDINGS_JSON=json.dumps(findings_data),
+        KERNELS_JSON=json.dumps(kernels),
+        STREAMS_JSON=json.dumps(streams),
+        GPU_LABEL_JSON=gpu_label_json,
+        TIME_RANGE_JSON=json.dumps(time_range),
+        PROGRESSIVE=progressive,
+        EVIDENCE_CSS_HREF=evidence_css_href,
+        EVIDENCE_JS_SRC=evidence_js_src,
+        API_PREFIX=api_prefix,
+    )

@@ -546,9 +546,24 @@ def _cmd_timeline_web(args, _profile):
             devices = args.gpu
         else:
             devices = prof.meta.devices if prof.meta.devices else [0]
+
+        # Auto-analyze: build findings in-process before serving
+        auto_findings = None
+        if getattr(args, 'auto_analyze', False) and not getattr(args, 'findings', None):
+            from nsys_ai.evidence_builder import EvidenceBuilder
+
+            device = devices[0] if isinstance(devices, list) else devices
+            builder = EvidenceBuilder(prof, device=device)
+            report = builder.build()
+            auto_findings = [f.to_dict() for f in report.findings]
+            print(f"Auto-analysis: {len(auto_findings)} finding(s)", flush=True)
+
         serve_timeline(
-            prof, devices, _parse_trim(args), port=args.port, open_browser=not args.no_browser
+            prof, devices, _parse_trim(args), port=args.port, open_browser=not args.no_browser,
+            findings_path=getattr(args, 'findings', None),
+            auto_findings=auto_findings,
         )
+
 
 
 def _cmd_tui(args, _profile):
@@ -695,6 +710,18 @@ def _cmd_agent(args, _profile):
         agent = Agent(args.profile)
         try:
             print(agent.analyze())
+            # Optionally produce evidence findings JSON
+            if getattr(args, "evidence", False):
+                from nsys_ai.annotation import save_findings
+                from nsys_ai.evidence_builder import EvidenceBuilder
+                from nsys_ai.profile import Profile
+
+                with Profile(args.profile) as prof:
+                    builder = EvidenceBuilder(prof, device=0)
+                    report = builder.build()
+                    out = getattr(args, "output", None) or "findings.json"
+                    save_findings(report, out)
+                    print(f"Evidence: {len(report.findings)} finding(s) → {out}")
         finally:
             agent.close()
     elif args.agent_action == "ask":
@@ -772,6 +799,9 @@ def _build_parser():
     _add_gpu_trim(p, gpu_required=False, trim_required=False)
     p.add_argument("--port", type=int, default=8144, help="HTTP port (default: 8144)")
     p.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
+    p.add_argument("--findings", default=None, help="Path to findings.json for evidence overlay")
+    p.add_argument("--auto-analyze", action="store_true",
+                   help="Run AI analysis on startup and show findings")
     p.set_defaults(handler=_cmd_timeline_web)
 
     p = sub.add_parser("chat", help="AI chat TUI")
@@ -991,6 +1021,10 @@ def _register_legacy_commands(sub):
     agent_sub = p.add_subparsers(dest="agent_action")
     sp_analyze = agent_sub.add_parser("analyze", help="Full auto-analysis report")
     sp_analyze.add_argument("profile", help="Path to .sqlite file")
+    sp_analyze.add_argument("--evidence", action="store_true",
+                            help="Also output evidence findings JSON")
+    sp_analyze.add_argument("-o", "--output", default=None,
+                            help="Output path for findings JSON (default: findings.json)")
     sp_ask = agent_sub.add_parser("ask", help="Ask a question about a profile")
     sp_ask.add_argument("profile", help="Path to .sqlite file")
     sp_ask.add_argument("question", help="Natural language question")

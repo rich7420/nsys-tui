@@ -65,9 +65,12 @@ nsys-ai report profile.sqlite --gpu 0 --trim 1.0 5.0 -o report.md
 |---------|-------|---------|
 | `nsys-ai open <profile>` | Opens in Perfetto/web/TUI viewer | Quick visual inspection |
 | `nsys-ai web <profile> --gpu 0 --trim 1 5` | Serves interactive web viewer | Browser-based timeline exploration |
+| `nsys-ai timeline-web <profile>` | Serves timeline-focused web UI | Full timeline + AI chat + evidence sidebar |
 | `nsys-ai chat <profile>` | Interactive AI chat TUI | Multi-turn analysis session |
 | `nsys-ai export <profile> --gpu 0 --trim 1 5` | Export Perfetto JSON | Post-processing / sharing |
 | `nsys-ai diff-web <before> <after>` | Web diff viewer | Visual side-by-side comparison |
+| `nsys-ai agent analyze <profile>` | Full auto-analysis report | CLI auto-analysis (no LLM needed) |
+| `nsys-ai agent ask <profile> "<question>"` | Ask a targeted question | Keyword-based skill selection |
 
 ### Common agent workflows
 
@@ -83,6 +86,14 @@ nsys-ai diff before.sqlite after.sqlite --chat  # deep-dive if needed
 # Workflow 3: Full report to file
 nsys-ai report profile.sqlite --gpu 0 --trim 1 5 -o analysis.md
 cat analysis.md
+
+# Workflow 4: Visual evidence for human verification
+# Step 1: Run analysis and export findings with visual evidence
+nsys-ai agent analyze profile.sqlite --evidence -o findings.json
+# Step 2: Open timeline with findings overlay for human review
+nsys-ai timeline-web profile.sqlite --findings findings.json
+# Or run auto-analyze on startup (no pre-existing findings needed)
+nsys-ai timeline-web profile.sqlite --auto-analyze
 ```
 
 ---
@@ -117,7 +128,7 @@ cat analysis.md
 ## Tool Sets
 
 ### Set A — Single Profile
-`query_profile_db` · `get_gpu_peak_tflops` · `compute_theoretical_flops` · `compute_region_mfu` · `compute_mfu` · `navigate_to_kernel` · `zoom_to_time_range` · `fit_nvtx_range`
+`query_profile_db` · `get_gpu_peak_tflops` · `compute_theoretical_flops` · `compute_region_mfu` · `compute_mfu` · `navigate_to_kernel` · `zoom_to_time_range` · `fit_nvtx_range` · `get_gpu_overlap_stats` · `get_nccl_breakdown`
 
 ### Set B — Diff Mode (two profiles loaded)
 All of Set A, plus:
