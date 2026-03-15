@@ -2360,6 +2360,7 @@ async function sendChat() {
             stream: true,
             ui_context: buildUIContext(),
             profile_path: BOOT.PROFILE_PATH || undefined,
+            findings_count: FINDINGS.length,
         };
         lastChatTs = Date.now();
 

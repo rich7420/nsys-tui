@@ -75,9 +75,9 @@ nsys-ai timeline-web fastvideo.sqlite --findings /tmp/findings.json
 Run skills with `--format json` to get timing data with nanosecond precision:
 
 ```bash
-# GPU idle gaps → use gap_start / gap_end as start_ns / end_ns
+# GPU idle gaps → use start_ns / end_ns directly for finding start/end
 nsys-ai skill run gpu_idle_gaps profile.sqlite --format json
-# Returns: [{"gap_start": 89000000000, "gap_end": 110000000000, "gap_ns": 21065000000, ...}]
+# Returns: [{"start_ns": 89000000000, "end_ns": 110000000000, "gap_ns": 21065000000, ...}]
 
 # Top kernels → use start / end
 nsys-ai skill run top_kernels profile.sqlite --format json

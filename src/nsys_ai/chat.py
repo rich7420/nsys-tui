@@ -507,6 +507,7 @@ def stream_agent_loop(
     diff_paths: tuple[str, str] | None = None,
     max_turns: int = 5,
     skill_names: list[str] | None = None,
+    findings_count: int = 0,
 ):
     """UI-agnostic streaming agent loop — yields event dicts.
 
@@ -921,10 +922,16 @@ def stream_agent_loop(
                     # model can reference it as "[Finding N]".
                     # If the caller (e.g., UI) provides an explicit index,
                     # use that to stay in sync with the viewer's findings
-                    # list; otherwise fall back to the module-level counter.
+                    # list. Otherwise, if the caller told us how many
+                    # findings are already rendered (findings_count), use
+                    # that as a base offset so that our local counter does
+                    # not collide with or misalign existing cards.
+                    # As a final fallback, use just the module-level counter.
                     explicit_index = finding_args.get("index")
                     if isinstance(explicit_index, int):
                         finding_index = explicit_index
+                    elif findings_count > 0:
+                        finding_index = findings_count + _next_finding_index()
                     else:
                         finding_index = _next_finding_index()
                     finding_payload = dict(finding_args)
@@ -1149,6 +1156,11 @@ def chat_completion_stream(body_bytes: bytes):
     skill_context: list[str] | None = payload.get("skill_context") or None
     effective_profile = profile_path if profile_path else None
 
+    findings_count = 0
+    raw_fc = payload.get("findings_count")
+    if isinstance(raw_fc, int) and raw_fc >= 0:
+        findings_count = raw_fc
+
     try:
         for ev in stream_agent_loop(
             model=model,
@@ -1158,6 +1170,7 @@ def chat_completion_stream(body_bytes: bytes):
             profile_path=effective_profile,
             max_turns=5,
             skill_names=skill_context,
+            findings_count=findings_count,
         ):
             t = ev.get("type")
             if t == "text":

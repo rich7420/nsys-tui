@@ -673,9 +673,29 @@ def _cmd_skill(args, _profile):
             sys.exit(1)
         dst_dir = Path(skills_dir)
         dst_dir.mkdir(parents=True, exist_ok=True)
-        dst = dst_dir / src.name
-        shutil.copy2(src, dst)
-        skill = load_skill_from_markdown(str(dst))
+        # Copy to a temporary path based on the source filename.
+        tmp_dst = dst_dir / src.name
+        shutil.copy2(src, tmp_dst)
+        # Load the skill to determine its canonical name.
+        skill = load_skill_from_markdown(str(tmp_dst))
+        normalized_dst = dst_dir / f"{skill.name}.md"
+        # If the canonical filename differs, rename the copied file,
+        # but avoid overwriting an existing skill file.
+        if normalized_dst != tmp_dst:
+            if normalized_dst.exists():
+                print(
+                    f"Error: a skill file for '{skill.name}' already exists at {normalized_dst}",
+                    file=sys.stderr,
+                )
+                try:
+                    tmp_dst.unlink()
+                except OSError:
+                    pass
+                sys.exit(1)
+            tmp_dst.rename(normalized_dst)
+            dst = normalized_dst
+        else:
+            dst = tmp_dst
         print(f"Added skill '{skill.name}' → {dst}")
     elif args.skill_action == "remove":
         from pathlib import Path

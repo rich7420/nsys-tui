@@ -8,6 +8,7 @@ Python logic and HTML/CSS/JS presentation.
 import json
 import os
 from string import Template
+import html
 
 from .tree import build_nvtx_tree, to_json
 
@@ -328,6 +329,9 @@ def generate_timeline_html(
         trim_label = "Progressive"
         progressive = "1"
 
+    safe_gpu_label = html.escape(gpu_label)
+    safe_trim_label = html.escape(trim_label)
+
     safe_data_json = _escape_json_for_html_script(data_json)
     safe_gpu_info_json = _escape_json_for_html_script(gpu_info_json)
     safe_gpu_label_json = _escape_json_for_html_script(gpu_label_json)
@@ -339,10 +343,10 @@ def generate_timeline_html(
     tmpl = _load_template("timeline.html")
     return tmpl.safe_substitute(
         DATA=safe_data_json,
-        GPU_LABEL=gpu_label,
+        GPU_LABEL=safe_gpu_label,
         GPU_LABEL_JSON=safe_gpu_label_json,
         GPU_INFO_JSON=safe_gpu_info_json,
-        TRIM_LABEL=trim_label,
+        TRIM_LABEL=safe_trim_label,
         PROGRESSIVE=progressive,
         TIMELINE_CSS_HREF=timeline_css_href,
         TIMELINE_JS_SRC=timeline_js_src,
@@ -454,6 +458,7 @@ def generate_evidence_html(
          data-streams='${STREAMS_JSON}'
          data-progressive="${PROGRESSIVE}">
     </div>
+    <div id="canvasWrap"><canvas id="c"></canvas></div>
     <script src="${EVIDENCE_JS_SRC}"></script>
 </body>
 </html>
