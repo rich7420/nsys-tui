@@ -2434,9 +2434,11 @@ async function sendChat() {
                     } else if (currentEvent === 'action') {
                         executeAIAction(payload);
                     } else if (currentEvent === 'finding') {
-                        const idx = Number.isFinite(payload.index)
-                            ? payload.index
-                            : addFinding(payload);
+                        // Always call addFinding so the finding is appended to
+                        // FINDINGS and the overlay/sidebar card is created.
+                        // Use the 1-based index returned by addFinding (derived
+                        // from the FINDINGS array position) for consistency.
+                        const idx = addFinding(payload);
                         appendChatMsg('system',
                             `📋 Finding ${idx}: ${payload.label || ''}`, 'system');
                     }

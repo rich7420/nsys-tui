@@ -919,7 +919,14 @@ def stream_agent_loop(
                         finding_args = {}
                     # Allocate a concrete index for this finding so the
                     # model can reference it as "[Finding N]".
-                    finding_index = _next_finding_index()
+                    # If the caller (e.g., UI) provides an explicit index,
+                    # use that to stay in sync with the viewer's findings
+                    # list; otherwise fall back to the module-level counter.
+                    explicit_index = finding_args.get("index")
+                    if isinstance(explicit_index, int):
+                        finding_index = explicit_index
+                    else:
+                        finding_index = _next_finding_index()
                     finding_payload = dict(finding_args)
                     finding_payload["index"] = finding_index
                     yield {"type": "finding", "finding": finding_payload}

@@ -39,6 +39,28 @@ def _escape_json_for_html_script(json_str: str) -> str:
     return json_str.replace("</", "<\\/")
 
 
+def _escape_json_for_html_attr(value) -> str:
+    """Serialize value to JSON (if needed) and escape for safe use in HTML attributes.
+
+    Ensures that characters like &, <, >, " and ' do not break the attribute
+    and cannot be used for HTML/JS injection, while remaining parseable as JSON
+    when read back from the DOM.
+    """
+    if isinstance(value, str):
+        json_text = value
+    else:
+        json_text = json.dumps(value)
+    # Escape HTML-sensitive characters and single quotes for single-quoted attrs.
+    return (
+        json_text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
 def generate_html(prof, device: int, trim: tuple[int, int]) -> str:
     """Generate a standalone HTML page showing the NVTX stack trace."""
     roots = build_nvtx_tree(prof, device, trim)
@@ -439,11 +461,11 @@ def generate_evidence_html(
         )
     return tmpl.safe_substitute(
         TITLE=title,
-        FINDINGS_JSON=json.dumps(findings_data),
-        KERNELS_JSON=json.dumps(kernels),
-        STREAMS_JSON=json.dumps(streams),
-        GPU_LABEL_JSON=gpu_label_json,
-        TIME_RANGE_JSON=json.dumps(time_range),
+        FINDINGS_JSON=_escape_json_for_html_attr(findings_data),
+        KERNELS_JSON=_escape_json_for_html_attr(kernels),
+        STREAMS_JSON=_escape_json_for_html_attr(streams),
+        GPU_LABEL_JSON=_escape_json_for_html_attr(gpu_label_json),
+        TIME_RANGE_JSON=_escape_json_for_html_attr(time_range),
         PROGRESSIVE=progressive,
         EVIDENCE_CSS_HREF=evidence_css_href,
         EVIDENCE_JS_SRC=evidence_js_src,
