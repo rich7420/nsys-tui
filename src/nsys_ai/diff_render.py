@@ -441,7 +441,11 @@ def to_diff_json(data: ProfileDiffSummary) -> str:
         "producer_version": _producer_version(),
         "diff_id": data.diff_id,
         "verdict": data.verdict,
-        "comparability_confidence": round(data.comparability_confidence, 3),
+        # Truncate (not round) so the displayed value can never cross the
+        # 0.5 verdict gate in the wrong direction — e.g. unrounded 0.4996
+        # would round up to 0.500 and look like it should have passed the
+        # gate, contradicting the (correct) "inconclusive" verdict.
+        "comparability_confidence": int(data.comparability_confidence * 1000) / 1000,
         "step_time": (
             {
                 "before_ms": round(sum(c.before_ms for c in data.category_attribution), 3),

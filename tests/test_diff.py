@@ -931,6 +931,26 @@ def test_v01_category_attribution_empty_on_overlap_error():
     assert compute_category_attribution(bad, bad) == []
 
 
+def test_v01_confidence_serialization_truncates_not_rounds():
+    """JSON-serialized confidence must never cross the 0.5 verdict gate
+    via rounding (e.g. 0.4996 must NOT show as 0.500)."""
+    from nsys_ai.diff import ProfileDiffSummary, ProfileSummary
+    from nsys_ai.diff_render import to_diff_json
+
+    bare = ProfileSummary(
+        path="", gpu=0, schema_version=None, total_gpu_ns=0,
+        kernel_rows=0, kernels=[], nvtx=[], overlap={},
+    )
+    summary = ProfileDiffSummary(
+        before=bare, after=bare, warnings=[], kernel_diffs=[], nvtx_diffs=[],
+        overlap_before={}, overlap_after={}, overlap_delta={},
+        top_regressions=[], top_improvements=[],
+        comparability_confidence=0.4996,
+    )
+    payload = json.loads(to_diff_json(summary))
+    assert payload["comparability_confidence"] == 0.499
+
+
 def test_v01_diff_id_is_stable_across_runs(tmp_path):
     """Same inputs → same diff_id (content-derived; not random)."""
     from nsys_ai import profile as profile_mod
