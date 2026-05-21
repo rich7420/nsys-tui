@@ -848,7 +848,7 @@ def test_v01_confidence_separates_schema_and_gpu_mismatch():
 
 def test_v01_no_signal_propagates_through_pipeline():
     """Overlap error → confidence drops, attribution empty, step_time fields None,
-    JSON omits step_time block. No fake-zero leakage."""
+    JSON step_time is null (key present, value null). No fake-zero leakage."""
     from nsys_ai.diff import ProfileDiffSummary, ProfileSummary, collect_sanity_warnings
     from nsys_ai.diff_render import to_diff_json
 

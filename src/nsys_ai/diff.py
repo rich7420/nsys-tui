@@ -275,7 +275,10 @@ def collect_sanity_warnings(
         c_overlap = 0.0
 
     confidence = max(0.0, min(1.0, c_schema * c_gpu * c_workload * c_kernel_overlap * c_overlap))
-    return warnings, round(confidence, 3)
+    # Return unrounded — compute_verdict reads this and the 0.5 gate must
+    # not be crossed by rounding artifacts (e.g. 0.4996 -> 0.5).
+    # Quantization happens at the serialization boundary in to_diff_json.
+    return warnings, confidence
 
 
 def _ms(overlap: dict, key: str) -> float:

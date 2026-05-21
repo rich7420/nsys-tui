@@ -441,7 +441,7 @@ def to_diff_json(data: ProfileDiffSummary) -> str:
         "producer_version": _producer_version(),
         "diff_id": data.diff_id,
         "verdict": data.verdict,
-        "comparability_confidence": data.comparability_confidence,
+        "comparability_confidence": round(data.comparability_confidence, 3),
         "step_time": (
             {
                 "before_ms": round(sum(c.before_ms for c in data.category_attribution), 3),
