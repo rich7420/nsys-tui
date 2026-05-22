@@ -262,9 +262,15 @@ def attribute_kernels_to_nvtx(
                         params + extra_params,
                     )
                 else:
+                    where_legacy = trim_sql
+                    extra_legacy: list = []
+                    if kernel_name_substring:
+                        connector = " AND" if where_legacy else "WHERE"
+                        where_legacy = f"{where_legacy}{connector} kernel_name ILIKE ?"
+                        extra_legacy.append(f"%{kernel_name_substring}%")
                     cur = adapter.execute(
-                        f"SELECT * FROM nvtx_kernel_map {trim_sql} ORDER BY k_start{limit_sql}",
-                        params,
+                        f"SELECT * FROM nvtx_kernel_map {where_legacy} ORDER BY k_start{limit_sql}",
+                        params + extra_legacy,
                     )
                 cols = [d[0] for d in cur.description]
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
