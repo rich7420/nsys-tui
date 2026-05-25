@@ -341,8 +341,9 @@ def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -
     the new ref instead of short-circuiting on a binary from the old checkout.
 
     No-op (beyond a probe) when the clone is already at ``CUTRACER_TAG``.
-    Raises ``RuntimeError`` if the ``git remote set-url``, fetch, or checkout
-    step fails.
+    Raises ``RuntimeError`` if the worktree has uncommitted local changes
+    (rather than discarding them), or if the ``git remote set-url``, fetch, or
+    checkout step fails.
     """
     current = subprocess.run(  # nosec B603 B607
         ["git", "describe", "--tags", "--exact-match"],
@@ -354,6 +355,22 @@ def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -
         if progress:
             print(f"  Using existing clone at: {clone_dir} (@ {CUTRACER_TAG})")
         return
+
+    # Refuse to clobber a dirty worktree — a user may have patched the clone
+    # for debugging. Surface it and let them decide, rather than silently
+    # discarding their work in the checkout below.
+    status = subprocess.run(  # nosec B603 B607
+        ["git", "status", "--porcelain"],
+        cwd=clone_dir,
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode == 0 and status.stdout.strip():
+        raise RuntimeError(
+            f"CUTracer clone at {clone_dir} has uncommitted local changes; "
+            f"refusing to check out {CUTRACER_TAG} over them. Commit or stash "
+            f"the changes, or delete the directory for a clean pinned build."
+        )
 
     if progress:
         print(f"  Existing clone is not at {CUTRACER_TAG} — fetching + checking out …")
@@ -370,7 +387,7 @@ def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -
     if set_url.returncode != 0:
         raise RuntimeError(
             f"git remote set-url origin failed (exit {set_url.returncode}):\n"
-            f"{getattr(set_url, 'stderr', '')}"
+            f"{set_url.stderr or ''}"
         )
     fetch = subprocess.run(  # nosec B603 B607
         ["git", "fetch", "--depth=1", "origin", "tag", CUTRACER_TAG],
@@ -381,10 +398,12 @@ def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -
     if fetch.returncode != 0:
         raise RuntimeError(
             f"git fetch of {CUTRACER_TAG} failed (exit {fetch.returncode}):\n"
-            f"{getattr(fetch, 'stderr', '')}"
+            f"{fetch.stderr or ''}"
         )
+    # Worktree is verified clean above, so a plain checkout suffices — no need
+    # for a destructive `-f` that would discard tracked edits.
     checkout = subprocess.run(  # nosec B603 B607
-        ["git", "checkout", "-f", CUTRACER_TAG],
+        ["git", "checkout", CUTRACER_TAG],
         cwd=clone_dir,
         capture_output=not progress,
         text=True,
@@ -392,7 +411,7 @@ def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -
     if checkout.returncode != 0:
         raise RuntimeError(
             f"git checkout of {CUTRACER_TAG} failed (exit {checkout.returncode}):\n"
-            f"{getattr(checkout, 'stderr', '')}"
+            f"{checkout.stderr or ''}"
         )
     # Stale artifact from the previous ref would otherwise be reused by the
     # `so_dest.exists()` short-circuit below.

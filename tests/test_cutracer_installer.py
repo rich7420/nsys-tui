@@ -276,9 +276,58 @@ class TestEnsurePinnedCheckout:
         cmds = [c.args[0] for c in mock_run.call_args_list]
         assert ["git", "remote", "set-url", "origin", CUTRACER_GITHUB] in cmds
         assert ["git", "fetch", "--depth=1", "origin", "tag", CUTRACER_TAG] in cmds
-        assert ["git", "checkout", "-f", CUTRACER_TAG] in cmds
+        # Plain checkout (no -f) on a clean worktree.
+        assert ["git", "checkout", CUTRACER_TAG] in cmds
         # Stale .so removed so the build step recompiles from the new ref.
         assert not so_dest.exists()
+
+    def test_dirty_worktree_refuses_checkout(self, tmp_path):
+        from nsys_ai.cutracer.installer import _ensure_pinned_checkout
+
+        clone = tmp_path / "CUTracer"
+        (clone / "lib").mkdir(parents=True)
+        so_dest = clone / "lib" / "cutracer.so"
+        so_dest.write_bytes(b"\x7fELF")  # must NOT be deleted on refusal
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["git", "describe"]:
+                return MagicMock(returncode=0, stdout="deadbeef\n", stderr="")
+            if cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout=" M src/foo.cu\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            with pytest.raises(RuntimeError, match="uncommitted local changes"):
+                _ensure_pinned_checkout(clone, so_dest, progress=False)
+
+        # No fetch/checkout attempted, stale .so left intact.
+        cmds = [c.args[0][:2] for c in mock_run.call_args_list]
+        assert ["git", "fetch"] not in cmds
+        assert ["git", "checkout"] not in cmds
+        assert so_dest.exists()
+
+    def test_error_message_normalizes_none_stderr(self, tmp_path):
+        """With progress=True, capture_output is False and .stderr is None —
+        the error message must not leak the literal 'None'."""
+        from nsys_ai.cutracer.installer import _ensure_pinned_checkout
+
+        clone = tmp_path / "CUTracer"
+        clone.mkdir()
+        so_dest = clone / "lib" / "cutracer.so"
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["git", "describe"]:
+                return MagicMock(returncode=0, stdout="deadbeef\n", stderr="")
+            if cmd[:2] == ["git", "status"]:
+                return MagicMock(returncode=0, stdout="", stderr=None)
+            if cmd[:2] == ["git", "fetch"]:
+                return MagicMock(returncode=1, stdout=None, stderr=None)
+            return MagicMock(returncode=0, stdout=None, stderr=None)
+
+        with patch("subprocess.run", side_effect=fake_run):
+            with pytest.raises(RuntimeError) as exc:
+                _ensure_pinned_checkout(clone, so_dest, progress=True)
+        assert "None" not in str(exc.value)
 
     def test_raises_on_set_url_failure(self, tmp_path):
         from nsys_ai.cutracer.installer import _ensure_pinned_checkout
