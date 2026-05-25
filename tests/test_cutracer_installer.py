@@ -231,6 +231,93 @@ class TestBuildSo:
 
 
 # ---------------------------------------------------------------------------
+# _ensure_pinned_checkout (existing-clone reconciliation)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsurePinnedCheckout:
+    def test_already_at_tag_is_reused_without_fetch(self, tmp_path):
+        from nsys_ai.cutracer.installer import CUTRACER_TAG, _ensure_pinned_checkout
+
+        clone = tmp_path / "CUTracer"
+        clone.mkdir()
+        so_dest = clone / "lib" / "cutracer.so"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=f"{CUTRACER_TAG}\n", stderr=""
+            )
+            _ensure_pinned_checkout(clone, so_dest, progress=False)
+
+        # Only the `git describe` probe should run — no fetch/checkout.
+        assert mock_run.call_count == 1
+        assert mock_run.call_args_list[0].args[0][:2] == ["git", "describe"]
+
+    def test_wrong_ref_triggers_fetch_checkout_and_drops_stale_so(self, tmp_path):
+        from nsys_ai.cutracer.installer import (
+            CUTRACER_GITHUB,
+            CUTRACER_TAG,
+            _ensure_pinned_checkout,
+        )
+
+        clone = tmp_path / "CUTracer"
+        (clone / "lib").mkdir(parents=True)
+        so_dest = clone / "lib" / "cutracer.so"
+        so_dest.write_bytes(b"\x7fELF")  # stale artifact from old ref
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["git", "describe"]:
+                return MagicMock(returncode=0, stdout="deadbeef\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run:
+            _ensure_pinned_checkout(clone, so_dest, progress=False)
+
+        cmds = [c.args[0] for c in mock_run.call_args_list]
+        assert ["git", "remote", "set-url", "origin", CUTRACER_GITHUB] in cmds
+        assert ["git", "fetch", "--depth=1", "origin", "tag", CUTRACER_TAG] in cmds
+        assert ["git", "checkout", "-f", CUTRACER_TAG] in cmds
+        # Stale .so removed so the build step recompiles from the new ref.
+        assert not so_dest.exists()
+
+    def test_raises_on_fetch_failure(self, tmp_path):
+        from nsys_ai.cutracer.installer import _ensure_pinned_checkout
+
+        clone = tmp_path / "CUTracer"
+        clone.mkdir()
+        so_dest = clone / "lib" / "cutracer.so"
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["git", "describe"]:
+                return MagicMock(returncode=0, stdout="deadbeef\n", stderr="")
+            if cmd[:2] == ["git", "fetch"]:
+                return MagicMock(returncode=1, stdout="", stderr="network down")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            with pytest.raises(RuntimeError, match="git fetch"):
+                _ensure_pinned_checkout(clone, so_dest, progress=False)
+
+    def test_raises_on_checkout_failure(self, tmp_path):
+        from nsys_ai.cutracer.installer import _ensure_pinned_checkout
+
+        clone = tmp_path / "CUTracer"
+        clone.mkdir()
+        so_dest = clone / "lib" / "cutracer.so"
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["git", "describe"]:
+                return MagicMock(returncode=0, stdout="deadbeef\n", stderr="")
+            if cmd[:2] == ["git", "checkout"]:
+                return MagicMock(returncode=1, stdout="", stderr="conflict")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            with pytest.raises(RuntimeError, match="git checkout"):
+                _ensure_pinned_checkout(clone, so_dest, progress=False)
+
+
+# ---------------------------------------------------------------------------
 # install (high-level, dry-run)
 # ---------------------------------------------------------------------------
 

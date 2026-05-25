@@ -331,6 +331,67 @@ def find_cutracer_source() -> Path | None:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_pinned_checkout(clone_dir: Path, so_dest: Path, *, progress: bool) -> None:
+    """Reconcile an existing CUTracer clone to ``CUTRACER_TAG``.
+
+    A clone left over from a prior install may be at an arbitrary ref (an old
+    HEAD, or the former ``facebookresearch`` org). If it is not already at the
+    pinned tag, repoint ``origin`` at the current URL, fetch the tag, and check
+    it out — then drop any stale ``cutracer.so`` so the caller recompiles from
+    the new ref instead of short-circuiting on a binary from the old checkout.
+
+    No-op (beyond a probe) when the clone is already at ``CUTRACER_TAG``.
+    Raises ``RuntimeError`` if the fetch or checkout fails.
+    """
+    current = subprocess.run(  # nosec B603 B607
+        ["git", "describe", "--tags", "--exact-match"],
+        cwd=clone_dir,
+        capture_output=True,
+        text=True,
+    )
+    if current.returncode == 0 and current.stdout.strip() == CUTRACER_TAG:
+        if progress:
+            print(f"  Using existing clone at: {clone_dir} (@ {CUTRACER_TAG})")
+        return
+
+    if progress:
+        print(f"  Existing clone is not at {CUTRACER_TAG} — fetching + checking out …")
+    # Org migration: make sure origin points at the current repo before fetch
+    # (an old clone may still reference facebookresearch).
+    subprocess.run(  # nosec B603 B607
+        ["git", "remote", "set-url", "origin", CUTRACER_GITHUB],
+        cwd=clone_dir,
+        capture_output=not progress,
+        text=True,
+    )
+    fetch = subprocess.run(  # nosec B603 B607
+        ["git", "fetch", "--depth=1", "origin", "tag", CUTRACER_TAG],
+        cwd=clone_dir,
+        capture_output=not progress,
+        text=True,
+    )
+    if fetch.returncode != 0:
+        raise RuntimeError(
+            f"git fetch of {CUTRACER_TAG} failed (exit {fetch.returncode}):\n"
+            f"{getattr(fetch, 'stderr', '')}"
+        )
+    checkout = subprocess.run(  # nosec B603 B607
+        ["git", "checkout", "-f", CUTRACER_TAG],
+        cwd=clone_dir,
+        capture_output=not progress,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        raise RuntimeError(
+            f"git checkout of {CUTRACER_TAG} failed (exit {checkout.returncode}):\n"
+            f"{getattr(checkout, 'stderr', '')}"
+        )
+    # Stale artifact from the previous ref would otherwise be reused by the
+    # `so_dest.exists()` short-circuit below.
+    if so_dest.exists():
+        so_dest.unlink()
+
+
 def _clone_and_build(
     clone_dir: Path,
     *,
@@ -348,8 +409,11 @@ def _clone_and_build(
 
     # ── Clone ────────────────────────────────────────────────────────────────
     if clone_dir.exists() and (clone_dir / "Makefile").exists():
-        if progress:
-            print(f"  Using existing clone at: {clone_dir}")
+        # A pre-existing clone may sit at any ref — an old HEAD from before
+        # tag pinning, or the previous facebookresearch org. Reusing it as-is
+        # would silently build whatever is checked out and defeat the pin, so
+        # reconcile it to CUTRACER_TAG before building.
+        _ensure_pinned_checkout(clone_dir, so_dest, progress=progress)
     else:
         if progress:
             print("  Cloning CUTracer from GitHub …")
