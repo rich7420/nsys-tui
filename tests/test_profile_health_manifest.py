@@ -530,47 +530,99 @@ class TestManifestOverheadRealignment:
     def test_auto_trim_realigns_overhead_to_effective_window(
         self, monkeypatch, minimal_nsys_conn, manifest_skill
     ):
-        """Monkey-patch the helper to record what window it's called with
-        and assert it matches the auto-trim-selected window."""
+        """The realignment branch must override the initially-injected
+        overhead with one recomputed against the auto-trim window.
+
+        Strategy: pick an auto-trim window *inside* the fixture's profile
+        range so the effective window doesn't collapse to zero after
+        clamping (the fixture's time_range is roughly 1 ms - 9 ms). Then
+        return *distinguishable* values from the helper for the
+        ``(None, None)`` injection path vs the windowed realignment path
+        so the final ``profiler_overhead_ms`` directly reveals which
+        path produced it.
+        """
         from nsys_ai.skills.builtins import profile_health_manifest as phm
 
-        fake_t0 = 1_000_000_000_000
-        fake_t1 = 1_020_000_000_000  # 20 s window
-
-        # Force auto-trim to a known window by stubbing the selector.
+        # Inside the fixture's profile range (1 ms - 9 ms); leaves headroom
+        # on both sides so we can also verify the clamp doesn't shrink it.
+        fake_t0 = 2_000_000
+        fake_t1 = 8_000_000  # 6 ms wide
         monkeypatch.setattr(
             phm, "_auto_select_trim_window", lambda prof: (fake_t0, fake_t1)
         )
 
-        calls: list[tuple[int | None, int | None]] = []
+        windowed_calls: list[tuple[int, int]] = []
 
         def fake_compute(conn, *, trim_start_ns=None, trim_end_ns=None):
-            calls.append((trim_start_ns, trim_end_ns))
-            # Return a small, sane value so the rest of the manifest
-            # doesn't choke on the synthesized overhead.
-            return 100  # 100 ns of overhead inside the window
+            if trim_start_ns is None and trim_end_ns is None:
+                # Initial injection from Skill.execute — baseline value.
+                return 100_000_000  # 100 ms
+            # Sub-skill calls AND the realignment call share this branch;
+            # record the realignment-shaped window so we can assert it.
+            if (trim_start_ns, trim_end_ns) == (fake_t0, fake_t1):
+                windowed_calls.append((trim_start_ns, trim_end_ns))
+            return 1_000_000  # 1 ms — distinct from the baseline above
 
-        # Replace the helper *via the base module* — the manifest imports
-        # it lazily inside ``_execute``, so we have to patch the source.
         from nsys_ai.skills import base as base_module
 
         monkeypatch.setattr(base_module, "compute_profiler_overhead_ns", fake_compute)
 
-        # Run the manifest. The minimal_nsys_conn fixture is short, so
-        # auto-trim wouldn't normally run — but we forced the selector
-        # to return a window above, which makes _execute treat it as
-        # auto-trimmed.
         rows = manifest_skill.execute(minimal_nsys_conn, device=0)
 
-        # The realignment call must have happened with the effective
-        # window (i.e. the trim_start_ns/trim_end_ns returned by the
-        # selector clamped to the profile time_range).
-        assert len(calls) >= 1, "compute_profiler_overhead_ns was not called for realignment"
-        # The last call is the realignment one; any earlier call would
-        # be from Skill.execute's own injection path.
-        last_start, last_end = calls[-1]
-        assert last_start is not None and last_end is not None
-        assert last_end - last_start > 0
-        # The realigned overhead_ms reflects the fake 100 ns return value
+        # The helper must have been called with the auto-trim window at
+        # least once (sub-skills + realignment all hit this shape).
+        assert windowed_calls, (
+            "compute_profiler_overhead_ns was never called with the auto-trim window"
+        )
+
+        # If realignment ran, the manifest's ``overhead_ns`` was overwritten
+        # to the windowed return value (1 ms). If realignment had been
+        # skipped — the bug shape — the value would still be 100 ms from
+        # the initial injection.
         dq = rows[0].get("data_quality", {})
-        assert dq.get("profiler_overhead_ms") == round(100 / 1e6, 1)
+        assert dq.get("profiler_overhead_ms") == 1.0, (
+            "realignment did not override the injected overhead_ns "
+            f"(profiler_overhead_ms={dq.get('profiler_overhead_ms')})"
+        )
+        # Sanity: effective window had positive width, so the branch was reachable.
+        assert rows[0].get("profile_span_ms", 0) > 0
+
+    def test_auto_trim_window_outside_profile_range_skips_realignment(
+        self, monkeypatch, minimal_nsys_conn, manifest_skill
+    ):
+        """When the auto-trim picker returns a window outside the actual
+        profile time_range, the clamp collapses the effective span to 0
+        and the realignment branch is correctly skipped — the injected
+        overhead value flows through unchanged. Pins the guard so a
+        zero-width window can't produce a division-by-zero or a stale
+        realigned value.
+        """
+        from nsys_ai.skills.builtins import profile_health_manifest as phm
+
+        # Far outside the fixture's range (1 ms - 9 ms) so the clamp
+        # makes effective_end < effective_start.
+        monkeypatch.setattr(
+            phm,
+            "_auto_select_trim_window",
+            lambda prof: (1_000_000_000_000, 1_020_000_000_000),
+        )
+
+        def fake_compute(conn, *, trim_start_ns=None, trim_end_ns=None):
+            if trim_start_ns is None and trim_end_ns is None:
+                return 100_000_000  # 100 ms — what survives if realignment is skipped
+            return 1_000_000  # 1 ms — what would appear if realignment fired
+
+        from nsys_ai.skills import base as base_module
+
+        monkeypatch.setattr(base_module, "compute_profiler_overhead_ns", fake_compute)
+
+        rows = manifest_skill.execute(minimal_nsys_conn, device=0)
+
+        # Effective window collapsed → realignment must be skipped, so
+        # the initial injection value survives.
+        assert rows[0].get("profile_span_ms") == 0
+        dq = rows[0].get("data_quality", {})
+        assert dq.get("profiler_overhead_ms") == 100.0, (
+            "realignment branch must be skipped when effective span is 0 "
+            f"(profiler_overhead_ms={dq.get('profiler_overhead_ms')})"
+        )
